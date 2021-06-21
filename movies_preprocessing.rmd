@@ -1,0 +1,679 @@
+---
+title: "Movie Analysis"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+author: 
+  - Chin-hung Yeh, 48341011
+  - Michael Zhao, 48311436 
+  - Jess Pei, 48422157
+  - Sunny Zhang, 48377801
+  - Ryan Li, 47038567
+output:
+  pdf_document: default
+geometry: "left=1.5cm, right=1.5cm, top=1.5cm, bottom=1.5cm"
+---
+```{r setup}
+knitr::opts_knit$set(root.dir = "D:/OneDrive/Study YZ/SMU MSBA/Apply Predictive Model/week3/HW2/movie")
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(ggplot2)
+library(stringr)
+num_col <- c('budget', 'popularity', 'revenue', 'runtime', 'vote_average', 'vote_count', 'mean_rating')
+json_col <- c('genres', 'production_companies', 'cast', 'crew')
+options(scipen = 999)
+```
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+credit <- read.csv('credits.csv')
+keywords <- read.csv('keywords.csv')
+links <- read.csv('links.csv')
+movies <- read.csv('movies_metadata.csv')
+ratings <- read.csv('ratings.csv')
+```
+
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# rating into average rating 
+ratings_gp <- ratings %>%
+  select(- c(userId, timestamp)) %>%
+  group_by(movieId) %>%
+  summarise(mean_rating = mean(rating))
+
+# movie joining 
+movies_sum <- movies %>%
+  mutate(id = as.integer(id)) %>%
+  inner_join(links, by = c('id' = 'tmdbId')) %>%
+  inner_join(credit, by = 'id') %>%
+  inner_join(ratings_gp, by = 'movieId') %>%
+  select (- c(movieId, id, imdbId, adult, belongs_to_collection, 
+              homepage, imdb_id, original_title, overview, poster_path, 
+              production_countries, release_date, spoken_languages, 
+              status, tagline, title, video
+              )
+          )
+
+# movie dtype cleaning 
+movies_sum <- movies_sum %>%
+  mutate(budget = as.integer(budget),
+         popularity = as.numeric(popularity)
+         ) %>%
+  drop_na()
+summary(movies_sum)
+dim(movies_sum)
+```
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# col set def 
+num_col <- c('budget', 'popularity', 'revenue', 'runtime', 'vote_average', 'vote_count', 'mean_rating')
+json_col <- c('genres', 'production_companies', 'cast', 'crew')
+
+# box plot f. outlier detection
+box_distri <- function(df){for (col in num_col){
+  hist(df[,col],
+       xlab=col,
+       breaks = sqrt(nrow(df)))
+  }
+}
+box_distri(movies_sum)
+```
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+nrow(movies_sum)
+# filtering non-sense points
+movies_sum <- movies_sum %>%
+  filter(runtime != 0,
+         vote_average != 0,
+         mean_rating != 0
+  ) %>% 
+  select( # as budget, popularity, revenue, vote_count has too many zeros,
+          # these columns are de-selected to avoid trimming out too many observations
+    -c(budget, popularity, revenue, vote_count)
+  )
+```
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+dim(movies_sum)
+num_col <- c('runtime', 'vote_average', 'mean_rating')
+box_distri(movies_sum)
+```
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+summary(movies_sum)
+
+
+```
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# Cleaning json format 
+movies_json <- movies_sum[,json_col]
+head(movies_json)
+```
+
+
+
+
+
+
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# --------------------------------------------------------------------
+gen <- movies_sum$genres
+
+genres = data.frame(row = NA, id = NA, genre = NA)
+
+#for row i of the data
+for(i in 1:length(gen)){ #length(gen) for full data
+  
+  geni = gen[i] #extract the i'th row and save as geni
+  
+  if(str_count(geni) != 2){
+    matchi = str_locate_all(geni,"('name': ')(.*?)('\\})")[[1]] #find the start/stop points 
+    matchiID = str_locate_all(geni,"('id':)(.*?)('name':)")[[1]] #find the start/stop points 
+    
+    if(nrow(matchi) != nrow(matchiID)){
+      outputi$id    = -1
+      outputi$genre = "error"
+    } else {
+      #within each row, look at the k'th match, of which there will be dim(matchi)[1] matches to consider
+      K = dim(matchi)[1]
+      outputi = data.frame(row = rep(i,K), id = rep(NA,K), genre = rep(NA,K))
+      
+      for(k in 1:K){
+        # print(str_sub(geni,matchi[k,1]+9,matchi[k,2]-2))
+        outputi$id[k]    = as.numeric(str_sub(geni,matchiID[k,1]+6,matchiID[k,2]-9))
+        outputi$genre[k] = str_sub(geni,matchi[k,1]+9,matchi[k,2]-2)
+      }
+    }
+    genres = bind_rows(genres,outputi)
+  }
+}
+
+# cleaning output genres
+genres <- genres %>%
+  drop_na()
+head(genres)
+```
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# empty df to fit in values 
+genres_cleaned <- data.frame(row.names = seq(1, length(unique(genres$row)), 1)) 
+genres_cleaned[, unique(genres$genre)] <- 0 
+
+# Converting output into cat dummy var form 
+## i counter for row replacement in pre-defined empty df 
+i <- 1 
+## loop through unique row with existed genres 
+for (unique.row in unique(genres$row)){
+  temp.col <- genres[which(genres$row == unique.row), "genre"]
+  genres_cleaned[i, temp.col] <- 1 
+  genres_cleaned[i, "row"] <- unique.row
+  i <- i + 1
+}
+
+head(genres_cleaned)
+```
+
+
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+#----------------------------------------------------------------------
+firm <- movies_sum$production_companies
+
+firms.df = data.frame(row = NA, id = NA, firm = NA)
+
+#for row i of the data
+for(i in 1:length(firm)){ #length(gen) for full data
+  
+  firmi = firm[i] #extract the i'th row and save as geni
+  
+  if(str_count(firmi) != 2){
+    matchi = str_locate_all(firmi,"('name': ')(.*?)(')")[[1]] #find the start/stop points 
+    matchiID = str_locate_all(firmi,"('id': )(.*?)(\\})")[[1]] #find the start/stop points 
+    
+    if(nrow(matchi) != nrow(matchiID)){
+      outputi$id = -1
+      outputi$firm = "error"
+    } else {
+      #within each row, look at the k'th match, of which there will be dim(matchi)[1] matches to consider
+      K = dim(matchi)[1]
+      outputi = data.frame(row = rep(i,K), id = rep(NA, K), firm = rep(NA,K))
+      
+      for(k in 1:K){
+        outputi$id[k] = as.numeric(str_sub(firmi,matchiID[k,1]+6,matchiID[k,2]-1))
+        outputi$firm[k] = str_sub(firmi,matchi[k,1]+9,matchi[k,2]-1)
+      }
+    }
+    firms.df = bind_rows(firms.df,outputi)
+  }
+}
+
+
+
+# chekcing error col
+firms_err <- firms.df %>%
+  filter(firm == 'error')
+##dim(firms_err)
+##head(firms_err)
+
+
+# inspecting form of possible data entry error to parse into dummy vars 
+unique((firms.df$row))[6174]
+firms.df[which(firms.df$row == 6991),]
+
+
+# inspecting all entry error data
+firms.df.tst2 <- firms.df %>%
+  drop_na() %>%
+  filter(firm != 'error') %>% # filtering out error 
+  select(-id) %>%
+  group_by(row, firm) %>%
+  count() %>% 
+  filter(n > 1) %>%
+  ungroup(row, firm)
+head(firms.df.tst2)
+
+
+# cleaning firms.df for further dummy var trans
+firms.df <- firms.df %>%
+  drop_na() %>%
+  filter(firm != 'error') %>% # filtering out error 
+  select(-id) %>%
+  group_by(row, firm) %>%
+  count() %>% 
+  filter(n == 1) %>%
+  ungroup(row, firm)
+```
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# empty df to fit in values 
+firms_all_feat <- data.frame(row.names = seq(1, length(unique(firms.df$row)), 1)) 
+firms_all_feat[, unique(firms.df$firm)] <- 0 
+
+
+# Converting output into cat dummy var form 
+## i counter for row replacement in pre-defined empty df 
+i <- 1 
+## loop through unique row with existed genres 
+for (unique.row in unique(firms.df$row)){
+  temp.col <- firms.df[which(firms.df$row == unique.row), "firm"]
+  firms_all_feat[i, unlist(temp.col)] <- 1 
+  firms_all_feat[i, "row"] <- unique.row
+  i <- i + 1
+}
+
+ttl.produced <- colSums(firms_all_feat)
+weighted.avg <- ttl.produced / dim(firms_all_feat)[[1]]
+desired.dummy.cnt <- length(which(weighted.avg >= 0.01))
+firms.dummy <- weighted.avg[which(weighted.avg >= 0.01)][1:(desired.dummy.cnt - 1)]
+
+# feature selection w. production account to higher than 1% 
+firms_cleaned <- firms_all_feat[, c(names(firms.dummy), 'row')]
+head(firms_cleaned)
+ttl.produced[1:10]
+```
+
+
+
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# ---------------------------------------------------
+mainchar <- movies_sum$cast
+
+mainchar.df = data.frame(row.names = seq(1, length(mainchar), 1))
+
+#for row i of the data
+for(i in 1:length(mainchar)){ #length(gen) for full data
+  
+  mainchari = mainchar[i] #extract the i'th row and save as geni
+  
+  if(str_count(mainchari) != 2){
+    matchi = str_locate_all(mainchari,"('name': ')(.*?)(')")[[1]] #find the start/stop points 
+    matchiID = str_locate_all(mainchari,"('id': )(.*?)(,)")[[1]] #find the start/stop points 
+    
+    if(nrow(matchi) != nrow(matchiID)){
+      mainchar.df[i,'id'] <- -1
+    } else {
+      #within each row, look at the k'th match, of which there will be dim(matchi)[1] matches to consider
+      mainchar.df[i,'row'] <- i
+      mainchar.df[i,'id'] <- as.numeric(str_sub(mainchari,matchiID[1,1]+6,matchiID[1,2]-1))
+      #print(str_sub(mainchari,matchiID[1,1]+6,matchiID[1,2]-1))
+      mainchar.df[i,'name'] <- paste0(str_sub(mainchari,matchi[1,1]+9,matchi[1,2]-1),
+                                      '.actor')
+    }
+  }
+}
+
+mainchar.df <- mainchar.df %>%
+  filter(id != -1)
+
+head(mainchar.df, 20)
+```
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# empty df to fit in values 
+cast_all_feat <- data.frame(row.names = seq(1, length(unique(mainchar.df$row)), 1)) 
+cast_all_feat[, unique(mainchar.df$name)] <- 0 
+
+
+# Converting output into cat dummy var form 
+## i counter for row replacement in pre-defined empty df 
+i <- 1 
+## loop through unique row with existed genres 
+for (unique.row in unique(mainchar.df$row)){
+  temp.col <- mainchar.df[which(mainchar.df$row == unique.row), "name"]
+  cast_all_feat[i, "row"] <- unique.row
+  cast_all_feat[i, unlist(temp.col)] <- 1 
+  i <- i + 1
+}
+
+
+ttl.acted <- colSums(cast_all_feat)
+desired.dummy <- which( ttl.acted >= 25)
+cast.dummy <- ttl.acted[desired.dummy]
+
+
+# feature selection w. production account to higher than 1% 
+firms_cleaned <- cast_all_feat[, names(cast.dummy)]
+head(firms_cleaned)
+```
+
+
+
+
+
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+dir <- movies_sum$crew
+
+dir.df = data.frame(row.names = seq(1, length(dir), 1))
+
+#for row i of the data
+for(i in 1:length(dir)){ #length(gen) for full data
+  
+  diri = dir[i] #extract the i'th row and save as geni
+  
+  if(str_count(diri) != 2){
+    matchi = str_locate_all(diri,"('name': ')(.*?)(')")[[1]] #find the start/stop points 
+    matchiID = str_locate_all(diri,"('id': )(.*?)(,)")[[1]] #find the start/stop points 
+    matchdir = str_locate_all(diri, "('job': 'Director',)(.*?)(,)")[[1]]
+    
+    if((nrow(matchi) != nrow(matchiID)) | (length(matchdir) == 0)){
+      dir.df[i,'id'] <- -1
+    } else {
+      #within each row, look at the k'th match, of which there will be dim(matchi)[1] matches to consider
+      dir.df[i,'row'] <- i
+      dir.df[i,'id'] <- as.numeric(str_sub(diri,matchiID[1,1]+6,matchiID[1,2]-1))
+      #print(str_sub(mainchari,matchiID[1,1]+6,matchiID[1,2]-1))
+      dir.df[i,'name'] <- paste0(str_sub(diri,matchdir[1,1]+28,matchdir[1,2]-2),
+                                 '.dir')
+    }
+  }
+}
+
+
+# filtering out na val 
+dir.df <- dir.df %>%
+  filter(id != -1)
+head(dir.df, 20)
+```
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# empty df to fit in values 
+dir_all_feat <- data.frame(row.names = seq(1, length(unique(dir.df$row)), 1)) 
+dir_all_feat[, unique(dir.df$name)] <- 0 
+
+
+# Converting output into cat dummy var form 
+## i counter for row replacement in pre-defined empty df 
+i <- 1 
+## loop through unique row with existed genres 
+for (unique.row in unique(dir.df$row)){
+  temp.col <- dir.df[which(dir.df$row == unique.row), "name"]
+  dir_all_feat[i, "row"] <- unique.row
+  dir_all_feat[i, unlist(temp.col)] <- 1 
+  i <- i + 1
+}
+
+
+ttl.dir <- colSums(dir_all_feat)
+desired.dir <- which( ttl.dir >= 25)
+dir.dummy <- ttl.dir[desired.dir]
+
+
+# feature selection w. production account to higher than 1% 
+dir_cleaned <- dir_all_feat[, names(dir.dummy)]
+head(dir_cleaned)
+```
+
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# ---------------------------------------------------------------------------
+## conti var normalization 
+head(movies_sum) 
+movies_conti <- movies_sum %>%
+  select(c(runtime, vote_average, mean_rating)) %>%
+  transmute(runtime.norm = scale(runtime),
+            vote_average.norm = scale(vote_average),
+            mean_ratings.norm = scale(mean_rating))
+head(movies_conti)
+
+# outliers checking 
+glm.cdist <- cooks.distance(glm(vote_average.norm ~., data = movies_conti))
+possible.outliers <- glm.cdist[which(glm.cdist >= 0.025)]
+movies_sum[names(possible.outliers), c('runtime', 'vote_average', 'mean_rating')]
+```
+
+```{r}
+# ---------------------------------------------------------------------------
+
+# creating keys to join for movies_conti 
+movies_conti[,'row.PK'] <- seq(1, dim(movies_conti)[1], 1)
+head(movies_conti)
+```
+
+```{r, fig.keep = 'none', echo = FALSE,  message=FALSE, results='hide'}
+# ----------------------------------------------------------------------------
+save(movies_sum, movies_conti, 
+     genres_cleaned, firms_cleaned, cast_cleaned, dir_cleaned, 
+     file = "data/movies_json_cleaned.RData")
+
+head(movies_conti)
+head(genres_cleaned)
+head(firms_cleaned)
+head(cast_cleaned)
+head(dir_cleaned)
+```
+
+```{r}
+load("data/movies_json_cleaned.RData")
+mean(movies_conti$mean_ratings.norm)
+sd(movies_conti$mean_ratings.norm)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
